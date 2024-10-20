@@ -150,9 +150,130 @@ const errorHandler = (err, req, res, next) => {
     });
 };
 
-// POST endpoint for membership sign-up with CSRF protection
+// Utility function for filtering
+const getFilterOptions = (query) => {
+    const filterOptions = {};
+    
+    if (query.status) {
+        filterOptions.status = query.status;
+    }
+    
+    if (query.search) {
+        const searchRegex = new RegExp(query.search, 'i');
+        filterOptions.$or = [
+            { firstName: searchRegex },
+            { lastName: searchRegex },
+            { email: searchRegex }
+        ];
+    }
+
+    if (query.startDate && query.endDate) {
+        filterOptions.createdAt = {
+            $gte: new Date(query.startDate),
+            $lte: new Date(query.endDate)
+        };
+    }
+
+    return filterOptions;
+};
+
+// GET endpoint for retrieving members
+router.get('/', async (req, res, next) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const sortField = req.query.sortField || 'createdAt';
+        const sortOrder = req.query.sortOrder === 'asc' ? 1 : -1;
+        
+        // Validate sort field to prevent injection
+        const allowedSortFields = ['firstName', 'lastName', 'email', 'createdAt', 'status'];
+        if (!allowedSortFields.includes(sortField)) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Invalid sort field'
+            });
+        }
+
+        // Build filter options
+        const filterOptions = getFilterOptions(req.query);
+
+        // Build sort options
+        const sortOptions = { [sortField]: sortOrder };
+
+        // Execute query with pagination
+        const skip = (page - 1) * limit;
+        
+        // Get total count for pagination
+        const totalCount = await Member.countDocuments(filterOptions);
+        
+        // Get members
+        const members = await Member.find(filterOptions)
+            .sort(sortOptions)
+            .skip(skip)
+            .limit(limit)
+            .select('-__v') // Exclude version key
+            .lean(); // Convert to plain JavaScript objects
+
+        // Calculate pagination info
+        const totalPages = Math.ceil(totalCount / limit);
+        const hasNextPage = page < totalPages;
+        const hasPrevPage = page > 1;
+
+        res.status(200).json({
+            status: 'success',
+            data: {
+                members,
+                pagination: {
+                    currentPage: page,
+                    totalPages,
+                    totalCount,
+                    hasNextPage,
+                    hasPrevPage,
+                    limit
+                }
+            }
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
+// GET endpoint for retrieving a single member
+router.get('/:id', async (req, res, next) => {
+    try {
+        // Validate ID format
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Invalid ID format'
+            });
+        }
+
+        const member = await Member.findById(req.params.id)
+            .select('-__v')
+            .lean();
+
+        if (!member) {
+            return res.status(404).json({
+                status: 'error',
+                message: 'Member not found'
+            });
+        }
+
+        res.status(200).json({
+            status: 'success',
+            data: {
+                member
+            }
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
+// POST endpoint for membership sign-up with CSRF protection 
 router.post('/signup', 
-    // doubleCsrfProtection, // CSRF protection middleware
+    // doubleCsrfProtection, // CSRF protection middleware (disable for local runs)
     validateMembershipInput, 
     async (req, res, next) => {
         try {

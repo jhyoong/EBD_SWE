@@ -1,0 +1,155 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Secure Membership API Infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+    Description: Environment name
+
+Resources:
+  # API Gateway with additional endpoints
+  MembershipApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub membership-api-${Environment}
+      Description: Secure API for handling membership data
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      MinimumCompressionSize: 1024
+
+  # List Memberships Method
+  ListMembershipsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref MembershipApi
+      ResourceId: !Ref MembershipsResource
+      HttpMethod: GET
+      AuthorizationType: NONE  # Consider adding authorization
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+          - LambdaArn: !GetAtt ListMembershipsFunction.Arn
+
+  # Enhanced DynamoDB Table with GSI
+  MembershipTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub memberships-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: N
+        - AttributeName: name
+          AttributeType: S
+        - AttributeName: email
+          AttributeType: S
+        - AttributeName: phoneNumber
+          AttributeType: S
+        - AttributeName: acceptedTerms
+          AttributeType: B
+        - AttributeName: newsletterSubscription
+          AttributeType: B
+        - AttributeName: status
+          AttributeType: S
+        - AttributeName: createdAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: EmailIndex
+          KeySchema:
+            - AttributeName: email
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: StatusCreatedAtIndex
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+
+  # Additional Lambda for list operation
+  ListMembershipsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.listMemberships
+      Role: !GetAtt MembershipLambdaRole.Arn
+      Code:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: !Sub ${Environment}/list-memberships.zip
+      Runtime: nodejs18.x
+      Timeout: 30
+      Environment:
+        Variables:
+          MEMBERSHIP_TABLE: !Ref MembershipTable
+          ENVIRONMENT: !Ref Environment
+
+  # Enhanced WAF rules
+  MembershipApiWAF:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub membership-api-waf-${Environment}
+      Description: WAF rules for membership API
+      Scope: REGIONAL
+      DefaultAction:
+        Allow: {}
+      Rules:
+        - Name: RateLimit
+          Priority: 1
+          Statement:
+            RateBasedStatement:
+              Limit: 2000
+              AggregateKeyType: IP
+          Action:
+            Block: {}
+        - Name: SQLInjectionRule
+          Priority: 2
+          Statement:
+            SqliMatchStatement:
+              FieldToMatch:
+                Body: {}
+              TextTransformations:
+                - Priority: 1
+                  Type: URL_DECODE
+          Action:
+            Block: {}
+        - Name: XSSRule
+          Priority: 3
+          Statement:
+            XssMatchStatement:
+              FieldToMatch:
+                Body: {}
+              TextTransformations:
+                - Priority: 1
+                  Type: NONE
+          Action:
+            Block: {}
+        - Name: BadBotRule
+          Priority: 4
+          Statement:
+            BadBotStatement: {}
+          Action:
+            Block: {}
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub https://${MembershipApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
+  WafArn:
+    Description: WAF Web ACL ARN
+    Value: !GetAtt MembershipApiWAF.Arn
