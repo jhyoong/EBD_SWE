@@ -98,6 +98,7 @@ Resources:
         Variables:
           MEMBERSHIP_TABLE: !Ref MembershipTable
           ENVIRONMENT: !Ref Environment
+          MEMBERSHIP_TOPIC_ARN: !Ref MembershipTopic
 
   # Enhanced WAF rules
   MembershipApiWAF:
@@ -146,6 +147,69 @@ Resources:
           Action:
             Block: {}
 
+# SNS Setup
+MembershipTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub membership-notifications-${Environment}
+      KmsMasterKeyId: alias/aws/sns
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  MembershipTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref MembershipTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowLambdaPublishing
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref MembershipTopic
+          - Sid: AllowOwnerFullAccess
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action: sns:*
+            Resource: !Ref MembershipTopic
+
+  # Update Lambda Role with SNS permissions
+  MembershipLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: MembershipLambdaPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                Resource: !GetAtt MembershipTable.Arn
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref MembershipTopic
+
 Outputs:
   ApiEndpoint:
     Description: API Gateway endpoint URL
@@ -153,3 +217,6 @@ Outputs:
   WafArn:
     Description: WAF Web ACL ARN
     Value: !GetAtt MembershipApiWAF.Arn
+  TopicArn:
+    Description: SNS Topic ARN
+    Value: !Ref MembershipTopic
