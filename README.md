@@ -6,7 +6,7 @@ Since AWS offers a wide range of services for hosting APIs, some key parts of th
 
 E.g if this is a low traffic service, it would be preferable to host it using AWS Lambda as the serverless compute base (which would require some re-writes of the code, but the main functionality and logic will remain unchanged)
 
-AWS Gateway and DynamoDB are the preferred choices for handling REST APIs, and most security concerns can be handled via AWS services natively without bloating the code. Alternatively, other options such as Cloudflare can be considered for traffic control and DDOS protection. 
+AWS Gateway and DynamoDB are the preferred choices for handling REST APIs, and most security concerns can be handled via AWS services natively without bloating the code. Alternatively, other options such as Cloudflare can be considered for traffic control and DDOS protection. If using DynamoDB, src/config/database.js should be modified to use AWS DynamoDB calls instead of mongoDB.
 
 The cloudformation.txt serves as a basic stack example that could be used to set up a serverless REST API solution. Do take note that the nodejs service in this repo is NOT ideal for serverless runs (e.g AWS Lambda). Otherwise, an alternative is to host it on AWS EC2.
 
